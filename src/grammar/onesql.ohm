@@ -1,0 +1,81 @@
+ONESQL {
+  Query = Condition (LogicalOp Condition)* OrderByClause?
+  
+  OrderByClause = "ORDER BY"i Field ("," Field)* ("ASC"i | "DESC"i)?
+  
+  Condition = GroupedCondition | BasicCondition
+  
+  GroupedCondition = "(" Condition ")"
+  
+  BasicCondition = 
+    | Field TextOp string
+    | Field ComparisonOp ValueOrFunction
+    | "NOT"i Condition
+  
+  LogicalOp = "AND"i | "OR"i
+  
+  ComparisonOp = "=" | "!=" | ">" | ">=" | "<" | "<=" | "IN"i | "NOT IN"i | "IS"i | "IS NOT"i
+  
+  TextOp = "~" | "!~"
+  
+  ValueOrFunction = 
+    | string
+    | number
+    | boolean
+    | "EMPTY"i
+    | "NULL"i
+    | Function
+  
+  Function = FunctionName "(" FunctionArgs? ")"
+  
+  FunctionArgs = ValueOrFunction ("," ValueOrFunction)*
+  
+  FunctionName = 
+    | "IS_EMPTY"i
+    | "IS_NOT_EMPTY"i
+    | "IS_NULL"i
+    | "IS_NOT_NULL"i
+    | "membersOf"i
+    | "currentUser"i
+    | "currentLogin"i
+    | "lastLogin"i
+    | "now"i
+    | "startOfDay"i
+    | "startOfWeek"i
+    | "startOfMonth"i
+    | "startOfSeason"i
+    | "startOfYear"i
+    | "endOfDay"i
+    | "endOfWeek"i
+    | "endOfMonth"i
+    | "endOfSeason"i
+    | "endOfYear"i
+    | "releasedVersions"i
+    | "unreleasedVersions"i
+    | "inprogressSprints"i
+    | "doneSprints"i
+    | "todoSprints"i
+    | "issueHistory"i
+    | "standardIssueTypes"i
+    | "subIssueTypes"i
+  
+  Field = ident
+  
+  string = "\"" stringChar* "\"" | "'" stringChar* "'"
+  
+  stringChar = ~("\"" | "'") any
+  
+  number = digit+ ("." digit+)?
+  
+  boolean = "TRUE"i | "FALSE"i
+  
+  ident = letter (letter | digit | "_")*
+  
+  letter = "a".."z" | "A".."Z" | "\\p{L}"
+  
+  digit = "0".."9" | "\\p{N}"
+  
+  _ = whitespace*
+  
+  whitespace = " " | "\t" | "\n" | "\r"
+} 
