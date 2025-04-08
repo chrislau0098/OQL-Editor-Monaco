@@ -14,14 +14,16 @@ type ONESQLOperator = typeof ONESQL_OPERATORS[number];
 type ONESQLFunction = typeof ONESQL_FUNCTIONS[number];
 type FieldType = keyof typeof FIELD_TYPES;
 
-// 创建补全项的工具函数
+// 创建补全项的工具函数 (增强版)
 function createCompletionItem(
   label: string,
   kind: monaco.languages.CompletionItemKind,
+  range: monaco.IRange,
   detail?: string,
   documentation?: string,
   insertText?: string,
-  sortText?: string
+  sortText?: string,
+  insertTextRules?: monaco.languages.CompletionItemInsertTextRule
 ): monaco.languages.CompletionItem {
   return {
     label,
@@ -30,12 +32,13 @@ function createCompletionItem(
     documentation,
     insertText: insertText || label,
     sortText: sortText || label,
-    range: undefined as any // 使用 any 类型绕过类型检查
+    range,
+    insertTextRules
   };
 }
 
 // 获取字段类型的补全项
-function getFieldTypeCompletions(field: ONESQLField): monaco.languages.CompletionItem[] {
+function getFieldTypeCompletions(field: ONESQLField, range: monaco.IRange): monaco.languages.CompletionItem[] {
   const completions: monaco.languages.CompletionItem[] = [];
   
   // 查找字段所属的类型
@@ -48,6 +51,7 @@ function getFieldTypeCompletions(field: ONESQLField): monaco.languages.Completio
             createCompletionItem(
               op,
               monaco.languages.CompletionItemKind.Operator,
+              range,
               `运算符: ${op}`,
               `可用于 ${type} 类型字段的运算符`
             )
@@ -62,6 +66,7 @@ function getFieldTypeCompletions(field: ONESQLField): monaco.languages.Completio
             createCompletionItem(
               func,
               monaco.languages.CompletionItemKind.Function,
+              range,
               `函数: ${func}`,
               `可用于 ${type} 类型字段的函数`
             )
@@ -77,7 +82,7 @@ function getFieldTypeCompletions(field: ONESQLField): monaco.languages.Completio
 }
 
 // 获取函数参数的补全项
-function getFunctionArgCompletions(func: ONESQLFunction): monaco.languages.CompletionItem[] {
+function getFunctionArgCompletions(func: ONESQLFunction, range: monaco.IRange): monaco.languages.CompletionItem[] {
   const completions: monaco.languages.CompletionItem[] = [];
   
   // 根据函数类型添加相应的参数补全
@@ -93,6 +98,7 @@ function getFunctionArgCompletions(func: ONESQLFunction): monaco.languages.Compl
         createCompletionItem(
           '"群组名称"',
           monaco.languages.CompletionItemKind.Value,
+          range,
           '群组名称',
           '输入群组名称，例如："测试"'
         )
@@ -118,6 +124,7 @@ function getFunctionArgCompletions(func: ONESQLFunction): monaco.languages.Compl
         createCompletionItem(
           '"+/-nn(y|M|w|d|h|m)"',
           monaco.languages.CompletionItemKind.Value,
+          range,
           '相对时间',
           '例如："+3d" 表示 3 天后'
         )
@@ -129,12 +136,14 @@ function getFunctionArgCompletions(func: ONESQLFunction): monaco.languages.Compl
         createCompletionItem(
           '"项目名称"',
           monaco.languages.CompletionItemKind.Value,
+          range,
           '项目名称',
           '例如："路线图"'
         ),
         createCompletionItem(
           '"版本标题"',
           monaco.languages.CompletionItemKind.Value,
+          range,
           '版本标题',
           '例如："V6"'
         )
@@ -150,6 +159,7 @@ function getFunctionArgCompletions(func: ONESQLFunction): monaco.languages.Compl
         createCompletionItem(
           'n',
           monaco.languages.CompletionItemKind.Value,
+          range,
           '数量',
           '最近查看的工作项数量，例如：10'
         )
@@ -164,66 +174,114 @@ function getFunctionArgCompletions(func: ONESQLFunction): monaco.languages.Compl
   return completions;
 }
 
-// 获取当前上下文的补全项
+// 获取当前上下文的补全项 (修复 trim 问题)
 function getContextAwareCompletions(
   model: monaco.editor.ITextModel,
   position: monaco.Position
 ): monaco.languages.CompletionItem[] {
   const textUntilPosition = model.getValueInRange({
-    startLineNumber: position.lineNumber,
+    startLineNumber: 1,
     startColumn: 1,
     endLineNumber: position.lineNumber,
     endColumn: position.column
   });
-  
-  const words = textUntilPosition.trim().split(/\s+/);
-  const lastWord = words[words.length - 1];
-  
-  // 如果最后一个词是字段名，返回该字段支持的运算符和函数
-  if (ONESQL_FIELDS.includes(lastWord as ONESQLField)) {
-    return getFieldTypeCompletions(lastWord as ONESQLField);
-  }
-  
-  // 如果最后一个词是运算符，返回该运算符支持的值类型
-  if (ONESQL_OPERATORS.includes(lastWord as ONESQLOperator)) {
-    return [
-      createCompletionItem('EMPTY', monaco.languages.CompletionItemKind.Keyword),
-      createCompletionItem('NULL', monaco.languages.CompletionItemKind.Keyword),
-      createCompletionItem('TRUE', monaco.languages.CompletionItemKind.Keyword),
-      createCompletionItem('FALSE', monaco.languages.CompletionItemKind.Keyword)
-    ];
-  }
-  
-  // 如果最后一个词是函数名，返回该函数的参数补全
-  if (ONESQL_FUNCTIONS.includes(lastWord as ONESQLFunction)) {
-    return getFunctionArgCompletions(lastWord as ONESQLFunction);
-  }
-  
-  // 如果最后一个词是 ORDER BY，返回字段列表
-  if (lastWord === 'ORDER BY') {
-    return ONESQL_FIELDS.map(field => 
+
+  const wordInfo = model.getWordUntilPosition(position);
+  const range = {
+    startLineNumber: position.lineNumber,
+    endLineNumber: position.lineNumber,
+    startColumn: wordInfo.startColumn,
+    endColumn: wordInfo.endColumn
+  };
+
+  // 先检查带空格的 ORDER BY，再 trim
+  const upperTextUntilPosition = textUntilPosition.toUpperCase(); // Case-insensitive check
+  console.log(`[DEBUG] Uppercase text before cursor: "${upperTextUntilPosition}"`);
+  console.log(`[DEBUG] Ends with 'ORDER BY ': ${upperTextUntilPosition.endsWith('ORDER BY ')}`);
+  console.log(`[DEBUG] Ends with 'ORDER BY\t': ${upperTextUntilPosition.endsWith('ORDER BY\t')}`);
+
+  if (upperTextUntilPosition.endsWith('ORDER BY ') || upperTextUntilPosition.endsWith('ORDER BY\t')) {
+    console.log('[DEBUG] Context matched: After ORDER BY (before trim)');
+    return ONESQL_FIELDS.map(field =>
       createCompletionItem(
         field,
         monaco.languages.CompletionItemKind.Field,
-        `字段: ${field}`
+        range,
+        `字段: ${field}`,
+        undefined,
+        `${field} ` // Insert field + space
       )
     );
   }
-  
-  // 如果最后一个词是字段名，且前面有 ORDER BY，返回排序方向
-  if (words[words.length - 2] === 'ORDER BY' && ONESQL_FIELDS.includes(lastWord as ONESQLField)) {
-    return [
-      createCompletionItem('ASC', monaco.languages.CompletionItemKind.Keyword),
-      createCompletionItem('DESC', monaco.languages.CompletionItemKind.Keyword)
-    ];
+
+  // 如果上面不匹配，现在可以 trim 并进行其他检查
+  const normalizedText = textUntilPosition.trim().toUpperCase(); 
+  console.log(`[DEBUG] Normalized (trimmed) text: "${normalizedText}"`);
+
+  // 检查是否在 ORDER BY field 后面需要 ASC/DESC
+  const orderByFieldMatch = normalizedText.match(/ORDER\s+BY\s+([A-Z_\u4E00-\u9FFF][A-Z0-9_\u4E00-\u9FFF]*)$/i);
+  // 注意：正则表达式移除了末尾的 \s+，因为 normalizedText 已经被 trim
+  console.log(`[DEBUG] ORDER BY Field regex match (on trimmed):`, orderByFieldMatch);
+  if (orderByFieldMatch) {
+    const potentialField = orderByFieldMatch[1];
+    console.log(`[DEBUG] Potential field after ORDER BY: ${potentialField}`);
+    const isKnownField = ONESQL_FIELDS.some(f => f.toUpperCase() === potentialField.toUpperCase());
+    console.log(`[DEBUG] Is known field: ${isKnownField}`);
+    if (isKnownField) {
+      console.log('[DEBUG] Context matched: After ORDER BY Field');
+      // 在这里，用户刚刚输入完字段名，还没输入空格，因此建议 ASC/DESC
+      // Range 应该替换掉字段名
+      const fieldRange = {
+        startLineNumber: position.lineNumber,
+        endLineNumber: position.lineNumber,
+        startColumn: position.column - potentialField.length, // 假设字段紧挨着光标
+        endColumn: position.column
+      };
+      return [
+        createCompletionItem(
+          'ASC',
+          monaco.languages.CompletionItemKind.Keyword,
+          fieldRange, // Use fieldRange to replace the field name
+          '升序排序',
+          undefined,
+          'ASC' // 只插入 ASC
+        ),
+        createCompletionItem(
+          'DESC',
+          monaco.languages.CompletionItemKind.Keyword,
+          fieldRange, // Use fieldRange to replace the field name
+          '降序排序',
+          undefined,
+          'DESC' // 只插入 DESC
+        )
+      ];
+    }
   }
-  
-  // 默认返回所有字段、关键字和函数
+
+  // 简单的示例：检查是否在 = 后面
+  console.log(`[DEBUG] Ends with '= ': ${normalizedText.endsWith('= ')}`);
+  if (normalizedText.endsWith('= ')) {
+     console.log('[DEBUG] Context matched: After =');
+     // Range 应该替换触发补全的部分（可能是空）
+     return [
+       createCompletionItem('"value"', monaco.languages.CompletionItemKind.Value, range, '字符串值'),
+       createCompletionItem('123', monaco.languages.CompletionItemKind.Value, range, '数值'),
+       ...ONESQL_FUNCTIONS.map(func => createCompletionItem(func, monaco.languages.CompletionItemKind.Function, range, `函数: ${func}`)),
+       createCompletionItem('EMPTY', monaco.languages.CompletionItemKind.Keyword, range, '特殊值'),
+       createCompletionItem('NULL', monaco.languages.CompletionItemKind.Keyword, range, '特殊值'),
+       createCompletionItem('TRUE', monaco.languages.CompletionItemKind.Keyword, range, '布尔值'),
+       createCompletionItem('FALSE', monaco.languages.CompletionItemKind.Keyword, range, '布尔值')
+     ];
+  }
+
+  // 默认/回退逻辑：提供所有顶级建议
+  console.log('[DEBUG] Context matched: Default');
   return [
-    ...ONESQL_FIELDS.map(field => 
+    ...ONESQL_FIELDS.map(field =>
       createCompletionItem(
         field,
         monaco.languages.CompletionItemKind.Field,
+        range,
         `字段: ${field}`
       )
     ),
@@ -231,6 +289,7 @@ function getContextAwareCompletions(
       createCompletionItem(
         keyword,
         monaco.languages.CompletionItemKind.Keyword,
+        range,
         `关键字: ${keyword}`
       )
     ),
@@ -238,6 +297,7 @@ function getContextAwareCompletions(
       createCompletionItem(
         func,
         monaco.languages.CompletionItemKind.Function,
+        range,
         `函数: ${func}`
       )
     )
@@ -247,13 +307,25 @@ function getContextAwareCompletions(
 // 注册 ONESQL 语言的补全提供者
 export function registerONESQLCompletionProvider(): monaco.IDisposable {
   return monaco.languages.registerCompletionItemProvider('onesql', {
-    triggerCharacters: [' ', '.', '=', '>', '<', '!', '~', '(', ')', ','],
-    
-    provideCompletionItems: (model, position) => {
+    triggerCharacters: [' ', '.', '=', '>', '<', '!', '~', '(', ')', ','], // 添加空格作为触发器
+
+    provideCompletionItems: (model, position, context, token) => {
+      // 获取当前单词的信息，用于确定替换范围
+      const wordInfo = model.getWordUntilPosition(position);
+      const range = {
+        startLineNumber: position.lineNumber,
+        endLineNumber: position.lineNumber,
+        startColumn: wordInfo.startColumn,
+        endColumn: wordInfo.endColumn
+      };
+
       const completions = getContextAwareCompletions(model, position);
-      
+
+      // 更新所有建议的 range
+      const suggestions = completions.map(c => ({ ...c, range }));
+
       return {
-        suggestions: completions,
+        suggestions: suggestions,
         incomplete: false
       };
     }
